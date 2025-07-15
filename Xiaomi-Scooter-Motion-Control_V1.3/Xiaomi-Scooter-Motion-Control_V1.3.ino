@@ -14,6 +14,12 @@
 //===========================================================================
 //============================= throttle behaviour ===========================
 //===========================================================================
+// for every kmh of speed, the scooter will give more percentage of throttle.
+#define THROTTLE_PCT_PER_KMH 5
+
+// Boost timer, how many seconds the motor will be powered after a kick
+#define THROTTLE_TIME 8
+
 // these settings are probably fine for everyone, some throttle buttons have more play than others, assuming the controler knows how to deal with this.
 #define THROTTLE_MIN 40
 #define THROTTLE_MAX 200
@@ -23,10 +29,6 @@
 //=============================Motion behavior  =============================
 //===========================================================================
 
-// Boost timer, how long the motor will be powered after a kick. time in miliseconds.
-int boosttimer_tier1 = 4000;
-int boosttimer_tier2 = 6000; 
-int boosttimer_tier3 = 8000; 
 int kickdelay = 1000; //time before you can do an new kick after boost timer is expired.
 
 // Smooth readings of the speedometer. The higher the number, the more the readings 
@@ -258,16 +260,11 @@ void motion_control() {
 void kickDetected() {
     Serial.println("Kick detected!");
 
-    if (AverageSpeed < 10) {
-        ThrottleWrite(40); //  40% throttle
-        timer_m.in(boosttimer_tier1, release_throttle); //Set timer to release throttle
-    } else if ((AverageSpeed >= 10) & (AverageSpeed < 14)) {
-        ThrottleWrite(80); //  80% throttle
-        timer_m.in(boosttimer_tier2, release_throttle); //Set timer to release throttle
-    } else {
-        ThrottleWrite(100); //  100% throttle
-        timer_m.in(boosttimer_tier3, release_throttle); //Set timer to release throttle
-    }
+    int throttle = THROTTLE_PCT_PER_KMH * AverageSpeed;
+
+    ThrottleWrite(throttle);
+
+    timer_m.in(THROTTLE_TIME * 1000, release_throttle); //Set timer to release throttle
 }
 
 int ThrottleWrite(int percent)
