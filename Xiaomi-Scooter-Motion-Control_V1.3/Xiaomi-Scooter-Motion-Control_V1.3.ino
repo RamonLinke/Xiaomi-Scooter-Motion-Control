@@ -13,6 +13,13 @@
 // 2 = Xiaomi Mi Scooter Pro 2
 
 #define SCOOTERTYPE 0
+//===========================================================================
+//============================= throttle behaviour ===========================
+//===========================================================================
+// these settings are probably fine for everyone, some throttle buttons have more play than others, assuming the controler knows how to deal with this.
+#define THROTTLE_MIN 40
+#define THROTTLE_MAX 200
+#define THROTTLE_RANGE THROTTLE_MAX - THROTTLE_MIN
 
 //===========================================================================
 //=============================Motion behavior  =============================
@@ -91,7 +98,7 @@ void setup()
 
     TCCR1B = TCCR1B & 0b11111001;  //Set PWM of PIN 9 & 10 to 32 khz
 
-    ThrottleWrite(45);
+    ThrottleWrite(0);
 }
 
 void loop() {
@@ -174,15 +181,15 @@ void loop() {
     // calculate the average:
     AverageSpeed = total / speedReadings;
 
-    Serial.print("Speed: ");
-    Serial.print(Speed);
-    Serial.print(" Throttle: ");
-    Serial.print(Throttle);
-    Serial.print(" Brake: ");
-    Serial.print(BrakeHandle);
-    Serial.print(" State: ");
-    Serial.print(motionstate);
-    Serial.println(" ");
+    // Serial.print("Speed: ");
+    // Serial.print(Speed);
+    // Serial.print(" Throttle: ");
+    // Serial.print(Throttle);
+    // Serial.print(" Brake: ");
+    // Serial.print(BrakeHandle);
+    // Serial.print(" State: ");
+    // Serial.print(motionstate);
+    // Serial.println(" ");
 
     motion_control();
     timer_m.tick();
@@ -210,11 +217,11 @@ bool motion_wait(void *) {
 void motion_control() {
     if ((Speed != 0) && (Speed < 5)) {
         // If speed is under 5 km/h, stop throttle
-        ThrottleWrite(45); //  0% throttle
+        ThrottleWrite(0); //  0% throttle
     }
 
     if (BrakeHandle > 47) {
-        ThrottleWrite(45); //close throttle directly when break is touched. 0% throttle
+        ThrottleWrite(0); //close throttle directly when break is touched. 0% throttle
         Serial.println("BRAKE detected!!!");
         digitalWrite(LED_PCB, HIGH);
         motionstate = motionready;
@@ -254,20 +261,33 @@ void kickDetected() {
     Serial.println("Kick detected!");
 
     if (AverageSpeed < 10) {
-        ThrottleWrite(140); //  40% throttle
+        ThrottleWrite(40); //  40% throttle
         timer_m.in(boosttimer_tier1, release_throttle); //Set timer to release throttle
     } else if ((AverageSpeed >= 10) & (AverageSpeed < 14)) {
-        ThrottleWrite(190); //  80% throttle
+        ThrottleWrite(80); //  80% throttle
         timer_m.in(boosttimer_tier2, release_throttle); //Set timer to release throttle
     } else {
-        ThrottleWrite(233); //  100% throttle
+        ThrottleWrite(100); //  100% throttle
         timer_m.in(boosttimer_tier3, release_throttle); //Set timer to release throttle
     }
 }
 
-int ThrottleWrite(int value)
+int ThrottleWrite(int percent)
 {
-    if (value != 0) {
-        analogWrite(THROTTLE_PIN, value);
-    }
+    // clamp input
+    if (percent < 0)
+        percent = 0;
+    else if (percent > 100)
+        percent = 100;
+
+    // Linear interpolation from THROTTLE_MIN to THROTTLE_MAX
+    int throttleVal = THROTTLE_MIN + (percent * (THROTTLE_RANGE)) / 100;
+
+    Serial.print("percent: ");
+    Serial.print(percent);
+    Serial.print(" throttleVal: ");
+    Serial.print(throttleVal);
+    Serial.println(" ");
+
+    analogWrite(THROTTLE_PIN, throttleVal);
 }
