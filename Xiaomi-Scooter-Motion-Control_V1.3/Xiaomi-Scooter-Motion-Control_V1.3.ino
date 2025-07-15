@@ -21,7 +21,7 @@
 #define THROTTLE_TIME 8
 
 // these settings are probably fine for everyone, some throttle buttons have more play than others, assuming the controler knows how to deal with this.
-#define THROTTLE_MIN 40
+#define THROTTLE_MIN 50
 #define THROTTLE_MAX 200
 #define THROTTLE_RANGE THROTTLE_MAX - THROTTLE_MIN
 
