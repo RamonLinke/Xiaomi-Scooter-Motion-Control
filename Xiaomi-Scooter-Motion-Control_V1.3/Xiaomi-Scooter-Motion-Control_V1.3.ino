@@ -5,14 +5,12 @@
 //SETTINGS
 
 //===========================================================================
-//=============================Select model  ================================
+//============================= braking behaviour ===========================
 //===========================================================================
-//
-// 0 = Xiaomi Mi Scooter Essential
-// 1 = Xiaomi Mi Scooter 1S (Not tested)
-// 2 = Xiaomi Mi Scooter Pro 2
+// 0 = Disables engine braking (if available)
+// 1 = Enables engine braking
+#define BREAKBEHAVIOUR 1
 
-#define SCOOTERTYPE 0
 //===========================================================================
 //============================= throttle behaviour ===========================
 //===========================================================================
@@ -198,11 +196,11 @@ void loop() {
 bool release_throttle(void *) {
     Serial.println("Timer expired, stopping...");
 
-    #if (SCOOTERTYPE==0)
-    ThrottleWrite(80); //Keep throttle open for 10% to disable KERS. best for essential.
-    #elif (SCOOTERTYPE==1) || (SCOOTERTYPE==2)
-    ThrottleWrite(45); //Close throttle. best for pro 2 & 1S.
-    #endif
+#if (BREAKBEHAVIOUR == 0)
+    ThrottleWrite(10); // Keep throttle open for 10% to disable KERS. best for essential.
+#else
+    ThrottleWrite(0); // Fully close throttle, may enable motor regeneration
+#endif
 
     timer_m.in(kickdelay, motion_wait);
     return false; // false to stop
