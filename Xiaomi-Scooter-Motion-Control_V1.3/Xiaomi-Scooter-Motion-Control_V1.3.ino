@@ -94,7 +94,7 @@ void setup()
     Serial.begin(115200);
     SoftSerial.begin(115200);
 
-    Serial.println("Starting Logging data...");
+    Serial.println("Starting up");
 
     TCCR1B = TCCR1B & 0b11111001;  //Set PWM of PIN 9 & 10 to 32 khz
 
@@ -130,36 +130,28 @@ void loop() {
     uint8_t messageOrigin = readBuff[1];
     uint8_t messageType = readBuff[2];
 
-    //for (int i = 0; i < messageLen + 2; i++)
-    {
-        switch (messageOrigin) {
-            case 0x20: // brake control?
-            {
-                switch (messageType) {
-                    case 0x64:
-                    {
-                        Throttle = readBuff[5];
-                        break;
-                    }
-                    case 0x65: // brake lever reading
-                    {
-                        BrakeHandle = readBuff[6];
-                        break;
-                    }
+    switch (messageOrigin) {
+        case 0x20: { // motor control
+            switch (messageType) {
+                case 0x64: { // throttle control reading
+                    Throttle = readBuff[5];
+                    break;
                 }
-                break;
-            }
-            case 0x21: // motor control?
-            {
-                switch (messageType) {
-                    case 0x64: // speed reading
-                    {
-                        Speed = readBuff[8];
-                        break;
-                    }
+                case 0x65: { // brake lever reading
+                    BrakeHandle = readBuff[6];
+                    break;
                 }
-                break;
             }
+            break;
+        }
+        case 0x21: { // speed sensor
+            switch (messageType) {
+                case 0x64: { // speed reading
+                    Speed = readBuff[8];
+                    break;
+                }
+            }
+            break;
         }
     }
 
@@ -196,7 +188,7 @@ void loop() {
 }
 
 bool release_throttle(void *) {
-    Serial.println("Timer expired, stopping...");
+    Serial.println("Releasing throttle");
 
 #if (BREAKBEHAVIOUR == 0)
     ThrottleWrite(10); // Keep throttle open for 10% to disable KERS. best for essential.
@@ -209,9 +201,8 @@ bool release_throttle(void *) {
 }
 
 bool motion_wait(void *) {
-    Serial.println("Ready for new kick!");
     motionstate = motionready;
-    return false; // false to stop
+    return false;
 }
 
 void motion_control() {
@@ -222,7 +213,7 @@ void motion_control() {
 
     if (BrakeHandle > 47) {
         ThrottleWrite(0); //close throttle directly when break is touched. 0% throttle
-        Serial.println("BRAKE detected!!!");
+        Serial.println("Braking detected");
         digitalWrite(LED_PCB, HIGH);
         motionstate = motionready;
         timer_m.cancel();
@@ -258,7 +249,7 @@ void motion_control() {
 }
 
 void kickDetected() {
-    Serial.println("Kick detected!");
+    Serial.println("Kick detected");
 
     int throttle = THROTTLE_PCT_PER_KMH * AverageSpeed;
 
@@ -278,11 +269,11 @@ int ThrottleWrite(int percent)
     // Linear interpolation from THROTTLE_MIN to THROTTLE_MAX
     int throttleVal = THROTTLE_MIN + (percent * (THROTTLE_RANGE)) / 100;
 
-    Serial.print("percent: ");
-    Serial.print(percent);
-    Serial.print(" throttleVal: ");
-    Serial.print(throttleVal);
-    Serial.println(" ");
+    // Serial.print("percent: ");
+    // Serial.print(percent);
+    // Serial.print(" throttleVal: ");
+    // Serial.print(throttleVal);
+    // Serial.println(" ");
 
     analogWrite(THROTTLE_PIN, throttleVal);
 }
