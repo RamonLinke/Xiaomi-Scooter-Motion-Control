@@ -45,6 +45,7 @@ auto timer_m = timer_create_default();
 
 int BrakeHandle;                // brake lever percent
 int Speed;                      // current speed
+int Throttle;
 
 int oldspeed;                   // speed during last loop
 int trend = 0;                  // speed trend
@@ -128,6 +129,11 @@ void loop() {
             case 0x20: // brake control?
             {
                 switch (messageType) {
+                    case 0x64:
+                    {
+                        Throttle = readBuff[5];
+                        break;
+                    }
                     case 0x65: // brake lever reading
                     {
                         BrakeHandle = readBuff[6];
@@ -167,8 +173,11 @@ void loop() {
 
     // calculate the average:
     AverageSpeed = total / speedReadings;
+
     Serial.print("Speed: ");
     Serial.print(Speed);
+    Serial.print(" Throttle: ");
+    Serial.print(Throttle);
     Serial.print(" Brake: ");
     Serial.print(BrakeHandle);
     Serial.print(" State: ");
