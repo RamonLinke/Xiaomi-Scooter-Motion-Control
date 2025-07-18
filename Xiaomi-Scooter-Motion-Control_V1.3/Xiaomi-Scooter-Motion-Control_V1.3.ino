@@ -11,70 +11,64 @@
 // 1 = Enables engine braking
 #define BREAKBEHAVIOUR 1
 
+// value when breaking is detected
+#define BRAKE_THRESHOLD_VAL 47
+
 //===========================================================================
 //============================= throttle behaviour ===========================
 //===========================================================================
 // for every kmh of speed, the scooter will give more percentage of throttle.
 #define THROTTLE_PCT_PER_KMH 5
 
-// Boost timer, how many seconds the motor will be powered after a kick
-#define THROTTLE_TIME 8
+// Boost timer, how many seconds until the throttle starts to wind down for a new kick
+#define THROTTLE_TIME 5
 
 // these settings are probably fine for everyone, some throttle buttons have more play than others, assuming the controler knows how to deal with this.
 #define THROTTLE_MIN 50
-#define THROTTLE_MAX 200
+#define THROTTLE_MAX 240
 #define THROTTLE_RANGE THROTTLE_MAX - THROTTLE_MIN
 
 //===========================================================================
 //=============================Motion behavior  =============================
 //===========================================================================
 
-int kickdelay = 1000; //time before you can do an new kick after boost timer is expired.
-
 // Smooth readings of the speedometer. The higher the number, the more the readings 
 // will be smoothed, but the slower the step will respond to the kicks.
-const int speedReadings = 20;
+#define SPEED_READINGS_AVERAGE 20
 
 //===========================================================================
 //=============================   Pin Settings  =============================
 //===========================================================================
-
-// Arduino pin where throttle is connected to (only pin 9 & 10 is ok to use)
-const int THROTTLE_PIN = 10;
-int LED_PCB = 13;
+#define THROTTLE_PIN 10
+#define FAKEKICK_PIN 4
+#define LED_PIN 13
 
 //TX & RX pin
 SoftwareSerial SoftSerial(2, 3); // RX, TX
 
 //END OF SETTINGS
 
-auto timer_m = timer_create_default();
+auto windDownTimer = timer_create_default();
+auto motionThinkTimer = timer_create_default();
 
 int BrakeHandle;                // brake lever percent
 int Speed;                      // current speed
 int Throttle;
 
-int oldspeed;                   // speed during last loop
-int trend = 0;                  // speed trend
-int readings[speedReadings];    // the readings from the speedometer
+int readings[SPEED_READINGS_AVERAGE];    // the readings from the speedometer
 int readIndex = 0;              // the index of the current reading
 int total = 0;                  // the running total
 int AverageSpeed = 0;           // the average speed over last X readings
 int OldAverageSpeed = 0;   		// the average speed over last X readings in the last loop
 
-//motionmodes
-uint8_t motionstate = 0;
-#define motionready 0
-#define motionbusy 1
-#define motionbreaking 2
-
-void logByteInHex(uint8_t val) {
-    if(val < 16)
-        Serial.print('0');
-        
-    Serial.print(val, 16);
-    Serial.print(' ');
-}
+// modes of operation
+enum class ThrottleState : uint8_t {
+    IDLE,
+    WIND_DOWN,
+    ACCELERATE,
+};
+ThrottleState throttleState = ThrottleState::IDLE;
+uint8_t throttlePowerPercent = 0;
 
 uint8_t readBlocking() {
     while (!SoftSerial.available())
@@ -85,9 +79,10 @@ uint8_t readBlocking() {
 
 void setup()
 {
-    pinMode(LED_PCB, OUTPUT);
+    pinMode(FAKEKICK_PIN, INPUT_PULLUP);
+    pinMode(LED_PIN, OUTPUT);
     // initialize all the readings to 0:
-    for (int thisReading = 0; thisReading < speedReadings; thisReading++) {
+    for (int thisReading = 0; thisReading < SPEED_READINGS_AVERAGE; thisReading++) {
         readings[thisReading] = 0;
     }
 
@@ -99,12 +94,23 @@ void setup()
     TCCR1B = TCCR1B & 0b11111001;  //Set PWM of PIN 9 & 10 to 32 khz
 
     ThrottleWrite(0);
+
+    motionThinkTimer.every(100, motionThink);
 }
 
 void loop() {
-    while (readBlocking() != 0x55);
-        if (readBlocking() != 0xAA)
+    motionThinkTimer.tick();
+
+    if (!SoftSerial.available())
+        return;
+
+    // messages should start with 0x55 followed by 0xAA
+    while (readBlocking() != 0x55)
+        if (!SoftSerial.available())
             return;
+
+    if (readBlocking() != 0xAA)
+        return;
 
     uint8_t readBuff[256];
     uint8_t messageLen = readBlocking();
@@ -165,100 +171,106 @@ void loop() {
     readIndex = readIndex + 1;
 
     // if we're at the end of the array...
-    if (readIndex >= speedReadings) {
+    if (readIndex >= SPEED_READINGS_AVERAGE) {
         // ...wrap around to the beginning:
         readIndex = 0;
     }
 
     // calculate the average:
-    AverageSpeed = total / speedReadings;
-
-    // Serial.print("Speed: ");
-    // Serial.print(Speed);
-    // Serial.print(" Throttle: ");
-    // Serial.print(Throttle);
-    // Serial.print(" Brake: ");
-    // Serial.print(BrakeHandle);
-    // Serial.print(" State: ");
-    // Serial.print(motionstate);
-    // Serial.println(" ");
-
-    motion_control();
-    timer_m.tick();
+    AverageSpeed = total / SPEED_READINGS_AVERAGE;
 }
 
-bool release_throttle(void *) {
-    Serial.println("Releasing throttle");
-
-#if (BREAKBEHAVIOUR == 0)
-    ThrottleWrite(10); // Keep throttle open for 10% to disable KERS. best for essential.
-#else
-    ThrottleWrite(0); // Fully close throttle, may enable motor regeneration
-#endif
-
-    timer_m.in(kickdelay, motion_wait);
-    return false; // false to stop
-}
-
-bool motion_wait(void *) {
-    motionstate = motionready;
+bool startWindDown(void *) {
+    Serial.println("winding down throttle");
+    throttleState = ThrottleState::WIND_DOWN;
     return false;
 }
 
-void motion_control() {
-    if ((Speed != 0) && (Speed < 5)) {
-        // If speed is under 5 km/h, stop throttle
-        ThrottleWrite(0); //  0% throttle
-    }
+void motionThink() {
+    // tick the winddown timer
+    windDownTimer.tick();
 
-    if (BrakeHandle > 47) {
-        ThrottleWrite(0); //close throttle directly when break is touched. 0% throttle
+    if (BrakeHandle > BRAKE_THRESHOLD_VAL) {
+        // brake is pressed, stop throttle
+        ThrottleWrite(0);
         Serial.println("Braking detected");
-        digitalWrite(LED_PCB, HIGH);
-        motionstate = motionready;
-        timer_m.cancel();
-    } else {
-        digitalWrite(LED_PCB, LOW);
+        digitalWrite(LED_PIN, HIGH);
+        throttleState = ThrottleState::IDLE;
+        windDownTimer.cancel();
+        return;
     }
+        
+    // brake is unpressed, turn off led
+    digitalWrite(LED_PIN, LOW);
 
-    if (Speed != 0) {
-        // Check if auto throttle is off and speed is increasing
-        if (motionstate == motionready) {
-            trend = AverageSpeed - OldAverageSpeed;
-            if (trend > 0) {
-                // speed is increasing
-                // Check if speed is at least 5 km/h
-                if (AverageSpeed > 5) {
-                    // Open throttle for 5 seconds
+    // check for a kick
+    if (Speed > 0 && AverageSpeed > 5) { // we are moving above 5kmh average
+        switch (throttleState) {
+            case ThrottleState::IDLE:
+            case ThrottleState::WIND_DOWN: { // we are in a idle or winddown state
+                // calculate our speedTrend
+                int speedTrend = AverageSpeed - OldAverageSpeed;
+                if (speedTrend > 0) // speedTrend is increasing
                     kickDetected();
-                    motionstate = motionbusy;
-
-                }
-
-            } else if (trend < 0) {
-                // speed is decreasing
-
-            } else {
-                // no change in speed
+                break;
             }
         }
 
-        oldspeed = Speed;
         OldAverageSpeed = AverageSpeed;
     }
+
+    updateThrottle();
 }
 
 void kickDetected() {
+    
     Serial.println("Kick detected");
 
-    int throttle = THROTTLE_PCT_PER_KMH * AverageSpeed;
+    // set initial throttle
+    throttlePowerPercent = THROTTLE_PCT_PER_KMH * AverageSpeed;
+    if (throttlePowerPercent > 100)
+        throttlePowerPercent = 100;
 
-    ThrottleWrite(throttle);
+    throttleState = ThrottleState::ACCELERATE;
 
-    timer_m.in(THROTTLE_TIME * 1000, release_throttle); //Set timer to release throttle
+    windDownTimer.cancel();
+    windDownTimer.in(THROTTLE_TIME * 1000, startWindDown); // Set timer to wind down
 }
 
-int ThrottleWrite(int percent)
+void updateThrottle()
+{
+    // check if the fake kick button is pressed
+    if (!digitalRead(FAKEKICK_PIN))
+        kickDetected();
+
+    uint8_t throttle;
+    switch (throttleState) {
+        case ThrottleState::IDLE: {
+            throttle = 0;
+            break;
+        }
+        case ThrottleState::WIND_DOWN: {
+            throttle = --throttlePowerPercent;
+
+            // check if we wound down to idle
+            if (!throttle)
+                throttleState = ThrottleState::IDLE;
+
+            break;
+        }
+        case ThrottleState::ACCELERATE: {
+            if (throttlePowerPercent < 100)
+                ++throttlePowerPercent;
+
+            throttle = throttlePowerPercent;
+            break;
+        }
+    }
+
+    ThrottleWrite(throttle);
+}
+
+int ThrottleWrite(uint8_t percent)
 {
     // clamp input
     if (percent < 0)
@@ -266,14 +278,15 @@ int ThrottleWrite(int percent)
     else if (percent > 100)
         percent = 100;
 
+    // update global throttle var
+    throttlePowerPercent = percent;
+
     // Linear interpolation from THROTTLE_MIN to THROTTLE_MAX
     int throttleVal = THROTTLE_MIN + (percent * (THROTTLE_RANGE)) / 100;
 
-    // Serial.print("percent: ");
-    // Serial.print(percent);
-    // Serial.print(" throttleVal: ");
-    // Serial.print(throttleVal);
-    // Serial.println(" ");
+    Serial.print("ThrottleWrite: ");
+    Serial.print(percent);
+    Serial.println(" ");
 
     analogWrite(THROTTLE_PIN, throttleVal);
 }
